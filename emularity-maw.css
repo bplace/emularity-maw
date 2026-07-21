@@ -1,0 +1,108 @@
+/*
+ * emularity-maw.css — myabandonware.com branding for the Emularity splash.
+ *
+ * Ported from the V3 site (www3 game.scss). The stock Emularity styles its
+ * splash inline from loader.js; passing `hasCustomCSS: true` to
+ * `emulator.start(...)` makes it skip those inline styles and defer to the
+ * classes below instead. Include this stylesheet and pass that flag to get the
+ * MAW look: a spinning branded logo, a top title bar, and a bottom progress bar.
+ *
+ * The splash element (`.emularity-splash-screen`) is appended to the canvas's
+ * parent, so give that parent `position: relative` for the overlay to sit over
+ * the canvas. The per-game screenshot background is set by the host app on the
+ * splash element itself — it is not styled here.
+ */
+
+/* Overlay covering the canvas. */
+.emularity-splash-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: crisp-edges;         /* CSS4 proposed */
+  image-rendering: pixelated;           /* CSS4 proposed */
+  -ms-interpolation-mode: nearest-neighbor; /* IE8+ */
+}
+
+/* The branded logo, centred and spinning on its vertical axis. */
+.emularity-splash-image {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 456px;
+  height: 92px;
+  margin-left: -228px;                  /* half the width */
+  margin-top: -46px;                    /* half the height */
+
+  -webkit-perspective: 1200px;
+  perspective: 1200px;
+
+  -webkit-animation: spinner 6s ease-in-out infinite;
+  animation: spinner 6s ease-in-out infinite;
+
+  -webkit-transform-style: preserve-3d;
+  transform-style: preserve-3d;
+}
+
+/* WebKit and Opera browsers */
+@-webkit-keyframes spinner {
+  from { -webkit-transform: rotateY(0deg); }
+  to   { -webkit-transform: rotateY(-360deg); }
+}
+
+/* all other browsers */
+@keyframes spinner {
+  from { transform: rotateY(0deg); }
+  to   { transform: rotateY(-360deg); }
+}
+
+/* Title ("Loading game archive") — top bar. */
+.emularity-splash-title {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 70px;
+  background: rgba(255, 255, 255, 0.7);
+  font-family: 'MetronicProCSB', 'Franklin Gothic Medium', 'Arial Black', sans-serif;
+  font-size: 24px;
+  text-align: center;
+  line-height: 70px;
+}
+
+/* Download progress — bottom bar. Emularity renders this as a table of
+   per-file rows (see addRow in loader.js), so style the table itself as the
+   bar and keep the rows readable inside it. */
+.emularity-progress-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.7);
+  border-collapse: collapse;
+  font-family: 'MetronicProCSB', 'Franklin Gothic Medium', 'Arial Black', sans-serif;
+  font-size: 18px;
+  text-align: center;
+}
+
+.emularity-progress-indicator td {
+  padding: 6px 12px;
+}
+
+.emularity-download-title {
+  white-space: nowrap;
+}
+
+.emularity-download-status {
+  padding-left: 0.5em;
+}
+
+.emularity-download-success {
+  color: #2e7d32;
+}
+
+.emularity-download-failure {
+  color: #c62828;
+}

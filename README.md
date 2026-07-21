@@ -13,6 +13,25 @@ Emularity downloads the files you specify (with a progress screen that shows bot
 
 The Emularity system has been used by millions of users at the [Internet Archive](https://archive.org).
 
+# myabandonware.com branding #
+
+This fork carries the [myabandonware.com](https://www.myabandonware.com) look for the splash screen:
+
+* **`emularity-maw.css`** styles the splash — a branded logo that spins on its vertical axis, a top title bar, and a bottom progress bar. Include it and pass `hasCustomCSS: true` to `emulator.start(...)`, which tells the loader to skip its inline styles and use these classes instead:
+
+  ```html
+  <link rel="stylesheet" href="emularity-maw.css">
+  ```
+  ```js
+  emulator.start({ waitAfterDownloading: false, hasCustomCSS: true });
+  emulator.setSplashTitle("Loading game archive");
+  ```
+* **`logo/maw.png`** is the default splash image, so no logo config is needed.
+* **`emulator.setSplashTitle(text)`** sets the title-bar text after `start()`.
+* The splash element is appended to the canvas's parent, so give that parent `position: relative` for the overlay to sit over the canvas. The host may set a per-game screenshot as the splash background on the splash element itself.
+
+See `example_maw.html` for a working page. The download URL for the game file (and any token) is supplied by the host via `DosBoxLoader.fetchFile(...)` — it is not part of this fork.
+
 # The Emulators #
 
 Currently works with three emulators:

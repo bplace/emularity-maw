@@ -10,6 +10,19 @@ Within the wider `myabandonware.com` workspace (see `/Volumes/www/sites/maw/CLAU
 
 There is no build step, no package manager, and no test runner — everything ships as plain ES5 script files loaded directly by `<script>` tags.
 
+## MAW branding (fork-specific)
+
+This fork adds the myabandonware.com splash look. It is purely visual — the download URL/token, playstats, view templates, per-game screenshot, and button wiring live in the V4 app (`www/`), not here. What is MAW-specific in this repo:
+
+- **`emularity-maw.css`** — the theme. Styles the `emularity-*` classes: a branded logo spinning on its vertical axis (`@keyframes spinner`, applied to `.emularity-splash-image`), a `.emularity-splash-title` top bar, and a `.emularity-progress-indicator` bottom bar. Activated by passing `hasCustomCSS: true` to `emulator.start(...)` (stock flag that makes the loader skip its inline styles). Ported from V3's `www3` `game.scss`, retargeting V3's ID selectors to this fork's class names.
+- **`logo/maw.png`** — the MAW logo, used as the default splash image.
+- **Two `loader.js` deltas from upstream** (search for `MAW:`):
+  - `drawsplash()` defaults the splash image to `logo/maw.png` instead of `logo/emularity_color_small.png`.
+  - a `this.setSplashTitle(title)` method on `Emulator` (delegates to the existing `splash.setTitle`), so the host can set the title-bar text after `start()`.
+- **`example_maw.html`** — the branded counterpart of `example_dosbox.html`; use it to verify the splash in a browser.
+
+Keep changes here to the visual layer. Anything tied to the game download, the app DOM, or per-game data belongs in `www/`, not this fork.
+
 ## Working in this repo
 
 - All of the logic lives in **`loader.js`** (~2600 lines), a single IIFE. There is no bundler; edit this file directly.

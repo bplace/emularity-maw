@@ -1851,6 +1851,13 @@ var Module = null;
        return this;
      };
 
+     // MAW: lets the host set the splash title text (e.g. "Loading game
+     // archive") after start(). splash.setTitle is defined further down.
+     this.setSplashTitle = function (title) {
+       splash.setTitle(title);
+       return this;
+     };
+
      this.setLoad = function (loadFunc) {
        loadFiles = loadFunc;
        return this;
@@ -2342,7 +2349,9 @@ var Module = null;
      var drawsplash = function () {
        canvas.setAttribute('moz-opaque', '');
        if (!splash.splashimg.src) {
-         splash.splashimg.src = "logo/emularity_color_small.png";
+         // MAW: default splash logo is the branded, spinning myabandonware logo
+         // (styled/animated by emularity-maw.css when hasCustomCSS is true).
+         splash.splashimg.src = "logo/maw.png";
        }
      };
 

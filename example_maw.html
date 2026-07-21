@@ -1,0 +1,46 @@
+<!--
+ The Emularity: myabandonware.com branded example
+
+ Same as example_dosbox.html, but with the MAW branding applied:
+ include emularity-maw.css, pass `hasCustomCSS: true` to start(), and set the
+ splash title. On load you should see the branded logo spinning over the splash
+ with a top title bar and a bottom progress bar. See example_dosbox.html for the
+ list of engine/game files this needs alongside it.
+-->
+
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>example maw game</title>
+    <link rel="stylesheet" href="emularity-maw.css">
+  </head>
+  <body>
+    <!-- give the canvas a positioned parent so the splash overlays it -->
+    <div id="playfield" style="position: relative; width: 640px; height: 480px; margin: 0 auto;">
+      <canvas id="canvas" style="width: 100%; height: 100%; display: block;"></canvas>
+    </div>
+    <script type="text/javascript" src="es6-promise.js"></script>
+    <script type="text/javascript" src="browserfs.min.js"></script>
+    <script type="text/javascript" src="loader.js"></script>
+    <script type="text/javascript">
+      var emulator = new Emulator(document.querySelector("#canvas"),
+                                  null,
+                                  new DosBoxLoader(DosBoxLoader.emulatorJS("emulators/em-dosbox/dosbox-sync.js"),
+                                                   DosBoxLoader.locateAdditionalEmulatorJS(locateAdditionalFiles),
+                                                   DosBoxLoader.nativeResolution(640, 480),
+                                                   DosBoxLoader.mountZip("c",
+                                                                         DosBoxLoader.fetchFile("Game File",
+                                                                                                "examples/DoomV1.9sw1995idSoftwareInc.action.zip")),
+                                                   DosBoxLoader.startExe("doom.exe")))
+      emulator.start({ waitAfterDownloading: true, hasCustomCSS: true });
+      emulator.setSplashTitle("Loading game archive");
+
+      function locateAdditionalFiles(filename) {
+        if (filename === "dosbox.html.mem") {
+          return "emulators/em-dosbox/dosbox-sync.mem";
+        }
+        return "emulators/em-dosbox/"+ filename;
+      }
+    </script>
+  </body>
+</html>
