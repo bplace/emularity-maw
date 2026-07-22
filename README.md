@@ -28,9 +28,44 @@ This fork carries the [myabandonware.com](https://www.myabandonware.com) look fo
   ```
 * **`logo/maw.png`** is the default splash image, so no logo config is needed.
 * **`emulator.setSplashTitle(text)`** sets the title-bar text after `start()`.
+* **A real loading bar.** In `hasCustomCSS` mode the loader tracks every download and drives a single fill bar with an "X / Y (NN%)" label (`.c-emulator__progress`). Stock mode is untouched — it keeps the per-file table.
 * The splash element is appended to the canvas's parent, so give that parent `position: relative` for the overlay to sit over the canvas. The host may set a per-game screenshot as the splash background on the splash element itself.
 
-See `example_maw.html` for a working page. The download URL for the game file (and any token) is supplied by the host via `DosBoxLoader.fetchFile(...)` — it is not part of this fork.
+## Controls (Start / Stop / Restart / Fullscreen)
+
+`emularity-controls.js` is an optional helper (`window.EmulatorControls`) that
+wires your own buttons to the emulator lifecycle. Load it after `loader.js`. The
+host owns the button markup and supplies a `createLoader` factory — **that
+factory is where the game download URL (with any token) and the exe are
+injected, so none of that lives in this fork.**
+
+```html
+<link rel="stylesheet" href="emularity-maw.css">
+<script src="es6-promise.js"></script>
+<script src="browserfs.min.js"></script>
+<script src="loader.js"></script>
+<script src="emularity-controls.js"></script>
+```
+```js
+new EmulatorControls({
+  canvas: "#canvas",
+  fullscreenElement: "#playfield",         // wrapper for the Firefox fullscreen fallback
+  splashTitle: "Loading game archive",
+  buttons: { start: "#start", stop: "#stop", restart: "#restart", fullscreen: "#fullscreen" },
+  createLoader: function () {              // host injects the download URL + exe here
+    return new DosBoxLoader(/* … */);
+  }
+});
+```
+
+- **Start** boots straight into the game after the download — no "press any key" gate.
+- **Stop** aborts any download, force-exits the runtime and swaps in a fresh canvas.
+- **Restart** = stop + start. **Fullscreen** is native, with a Firefox CSS fallback.
+- Buttons enable/disable by state (via `.c-emulator__control--disabled`); style them however you like with the `.c-emulator__control*` classes.
+
+See `example_maw.html` for a full working page. The download URL for the game
+file (and any token) is supplied by the host through `createLoader` /
+`DosBoxLoader.fetchFile(...)` — it is not part of this fork.
 
 # The Emulators #
 

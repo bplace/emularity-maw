@@ -1858,6 +1858,21 @@ var Module = null;
        return this;
      };
 
+     // MAW: aborts any in-flight downloads and asks the runner to stop. Heavy
+     // teardown of an Emscripten engine (force-exit + canvas swap) is the
+     // caller's job — see EmulatorControls. Safe to call before start().
+     this.stop = function () {
+       for (var i = 0; i < requests.length; i++) {
+         if (requests[i] && requests[i].xhr) {
+           try { requests[i].xhr.abort(); } catch (e) {}
+         }
+       }
+       if (runner) {
+         try { runner.stop(); } catch (e) {}
+       }
+       return this;
+     };
+
      this.setLoad = function (loadFunc) {
        loadFiles = loadFunc;
        return this;
@@ -2154,15 +2169,22 @@ var Module = null;
        var row = addRow(splash.table);
        var titleCell = row[0], statusCell = row[1];
        titleCell.textContent = title;
+       var entry = null; // MAW: this download's slot in the aggregate progress bar
        return new Promise(function (resolve, reject) {
                             if (cached) {
                               success();
                               resolve(url); // second parameter reused as a pass–through
                             } else {
+                              entry = { loaded: 0, total: 0, done: false, xhr: null };
+                              requests.push(entry);
                               var xhr = new XMLHttpRequest();
+                              entry.xhr = xhr;
                               xhr.open('GET', url, true);
                               xhr.responseType = rt || 'arraybuffer';
                               xhr.onprogress = function (e) {
+                                                 entry.loaded = e.loaded;
+                                                 entry.total = e.lengthComputable ? e.total : 0;
+                                                 updateProgress();
                                                  titleCell.innerHTML = title +" <span style=\"font-size: smaller\">"+ formatSize(e) +"</span>";
                                                };
                               xhr.onload = function (e) {
@@ -2190,6 +2212,11 @@ var Module = null;
                             }
                           });
        function success() {
+         if (entry) {
+           entry.done = true;
+           if (entry.total) entry.loaded = entry.total; else entry.total = entry.loaded;
+           updateProgress();
+         }
          statusCell.textContent = "✔";
          titleCell.parentNode.classList.add('emularity-download-success');
          titleCell.textContent = title;
@@ -2200,6 +2227,10 @@ var Module = null;
          }
        }
        function failure() {
+         if (entry) {
+           entry.done = true;
+           updateProgress();
+         }
          statusCell.textContent = "✘";
          titleCell.parentNode.classList.add('emularity-download-failure');
          titleCell.textContent = title;
@@ -2301,6 +2332,46 @@ var Module = null;
          splash.splashElt.appendChild(table);
        }
        splash.table = table;
+
+       // MAW: a single aggregate loading bar (fill + label). Only in themed
+       // mode; stock users keep the per-file table untouched. Styled by
+       // emularity-maw.css (.c-emulator__progress*).
+       if (globalOptions.hasCustomCSS) {
+         splash.progressElt = document.createElement('div');
+         splash.progressElt.classList.add("c-emulator__progress");
+         splash.progressFill = document.createElement('div');
+         splash.progressFill.classList.add("c-emulator__progress-fill");
+         splash.progressLabel = document.createElement('span');
+         splash.progressLabel.classList.add("c-emulator__progress-label");
+         splash.progressElt.appendChild(splash.progressFill);
+         splash.progressElt.appendChild(splash.progressLabel);
+         splash.splashElt.appendChild(splash.progressElt);
+       }
+     }
+
+     // MAW: recompute the aggregate loading bar from every tracked download.
+     function updateProgress() {
+       if (!splash.progressFill)
+         return;
+       var loaded = 0, total = 0, known = requests.length > 0;
+       for (var i = 0; i < requests.length; i++) {
+         loaded += requests[i].loaded;
+         if (requests[i].total)
+           total += requests[i].total;
+         else
+           known = false;
+       }
+       if (requests.length === 0)
+         return;
+       if (known) {
+         var pct = total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : 100;
+         splash.progressElt.classList.remove("c-emulator__progress--indeterminate");
+         splash.progressFill.style.width = pct + "%";
+         splash.progressLabel.textContent = formatBytes(loaded) +" / "+ formatBytes(total) +" ("+ pct +"%)";
+       } else {
+         splash.progressElt.classList.add("c-emulator__progress--indeterminate");
+         splash.progressLabel.textContent = formatBytes(loaded);
+       }
      }
 
      splash.setTitle = function (title) {

@@ -72,37 +72,132 @@
   line-height: 70px;
 }
 
-/* Download progress — bottom bar. Emularity renders this as a table of
-   per-file rows (see addRow in loader.js), so style the table itself as the
-   bar and keep the rows readable inside it. */
+/* Download progress. The engine still builds its per-file table
+   (.emularity-progress-indicator); the MAW theme hides it and shows a single
+   aggregate loading bar (.c-emulator__progress, built in loader.js) instead. */
 .emularity-progress-indicator {
+  display: none;
+}
+
+/* Aggregate loading bar — bottom strip: a fill that grows with the download,
+   with a centred "X / Y (NN%)" label on top. */
+.c-emulator__progress {
   position: absolute;
   bottom: 0;
   left: 0;
   width: 100%;
+  height: 70px;
+  overflow: hidden;
   background: rgba(255, 255, 255, 0.7);
-  border-collapse: collapse;
-  font-family: 'MetronicProCSB', 'Franklin Gothic Medium', 'Arial Black', sans-serif;
-  font-size: 18px;
   text-align: center;
 }
 
-.emularity-progress-indicator td {
-  padding: 6px 12px;
+.c-emulator__progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.85);
+  transition: width 0.2s ease-out;
 }
 
-.emularity-download-title {
-  white-space: nowrap;
+.c-emulator__progress-label {
+  position: relative;
+  z-index: 1;
+  line-height: 70px;
+  font-family: 'MetronicProCSB', 'Franklin Gothic Medium', 'Arial Black', sans-serif;
+  font-size: 24px;
 }
 
-.emularity-download-status {
-  padding-left: 0.5em;
+/* Unknown total (no Content-Length): sweep a stripe instead of a real fill. */
+.c-emulator__progress--indeterminate .c-emulator__progress-fill {
+  width: 40%;
+  background: linear-gradient(90deg,
+              rgba(255, 255, 255, 0) 0%,
+              rgba(255, 255, 255, 0.85) 50%,
+              rgba(255, 255, 255, 0) 100%);
+  animation: c-emulator-progress-sweep 1.2s linear infinite;
 }
 
-.emularity-download-success {
-  color: #2e7d32;
+@keyframes c-emulator-progress-sweep {
+  from { left: -40%; }
+  to   { left: 100%; }
 }
 
-.emularity-download-failure {
-  color: #c62828;
+/* ---------------------------------------------------------------------------
+   Controls — Start / Stop / Restart / Fullscreen.
+   The host owns the button markup; these are generic (no site sprite), so V4
+   can override with its own look. Per-button hooks are available for distinct
+   icons/colours: .c-emulator__control--start / --stop / --restart / --fullscreen
+   --------------------------------------------------------------------------- */
+.c-emulator__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.c-emulator__control {
+  display: inline-block;
+  padding: 0 24px;
+  min-height: 44px;
+  line-height: 44px;
+  border: 0;
+  border-radius: 3px;
+  background: #4ac4f7;              /* MAW blue */
+  color: #fff;
+  font-family: 'MetronicProCSB', 'Franklin Gothic Medium', 'Arial Black', sans-serif;
+  font-size: 18px;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.c-emulator__control:hover {
+  background: #2bb4ee;
+}
+
+.c-emulator__control--disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Fullscreen button while the CSS-fallback fullscreen is active: keep it
+   reachable (top-right) so the user can toggle back out. */
+.c-emulator__control--active {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 10000;
+}
+
+/* ---------------------------------------------------------------------------
+   Firefox fullscreen fallback. Native fullscreen misbehaves on the WebGL
+   canvas in Firefox, so the wrapper (block .c-emulator) is blown up via CSS
+   instead. Toggled by emularity-controls.js. !important defeats any inline
+   sizing the host set on the wrapper.
+   --------------------------------------------------------------------------- */
+.c-emulator--fullscreen {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  z-index: 9999 !important;
+  background: rgba(20, 20, 20, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.c-emulator--fullscreen canvas {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 4 / 3;
+  margin: 0 auto;
 }

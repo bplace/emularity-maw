@@ -1,11 +1,12 @@
 <!--
  The Emularity: myabandonware.com branded example
 
- Same as example_dosbox.html, but with the MAW branding applied:
- include emularity-maw.css, pass `hasCustomCSS: true` to start(), and set the
- splash title. On load you should see the branded logo spinning over the splash
- with a top title bar and a bottom progress bar. See example_dosbox.html for the
- list of engine/game files this needs alongside it.
+ Shows the full MAW setup: the branded splash + spinning logo, the aggregate
+ loading bar, boot-straight-into-the-game (no "press any key"), and the
+ Start / Stop / Restart / Fullscreen controls.
+
+ Load order: es6-promise.js, browserfs.min.js, loader.js, emularity-controls.js.
+ See example_dosbox.html for the engine/game files this needs alongside it.
 -->
 
 <html>
@@ -13,27 +14,69 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>example maw game</title>
     <link rel="stylesheet" href="emularity-maw.css">
+    <style>
+      /* Demo layout: centre the emulator, 80vw wide, classic 4:3. */
+      #playfield {
+        position: relative;          /* splash overlays the canvas; fullscreen target */
+        width: 80vw;
+        aspect-ratio: 4 / 3;
+        margin: 20px auto;
+      }
+      #canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;  /* crisp scaling for the DOS graphics */
+        /* placeholder shown until the game draws over it (before start / after stop) */
+        background: #000 url('examples/doom_16.png') no-repeat center center;
+        background-size: cover;
+      }
+      .c-emulator__controls {
+        justify-content: center;     /* buttons centred under the emulator */
+      }
+    </style>
   </head>
   <body>
-    <!-- give the canvas a positioned parent so the splash overlays it -->
-    <div id="playfield" style="position: relative; width: 640px; height: 480px; margin: 0 auto;">
-      <canvas id="canvas" style="width: 100%; height: 100%; display: block;"></canvas>
+    <!-- the wrapper is the `c-emulator` block: positioned so the splash overlays
+         the canvas, and the target for the Firefox fullscreen fallback -->
+    <div id="playfield" class="c-emulator">
+      <canvas id="canvas"></canvas>
     </div>
+
+    <div class="c-emulator__controls">
+      <button class="c-emulator__control c-emulator__control--start" id="start">Start</button>
+      <button class="c-emulator__control c-emulator__control--stop" id="stop">Stop</button>
+      <button class="c-emulator__control c-emulator__control--restart" id="restart">Restart</button>
+      <button class="c-emulator__control c-emulator__control--fullscreen" id="fullscreen">Fullscreen</button>
+    </div>
+
     <script type="text/javascript" src="es6-promise.js"></script>
     <script type="text/javascript" src="browserfs.min.js"></script>
     <script type="text/javascript" src="loader.js"></script>
+    <script type="text/javascript" src="emularity-controls.js"></script>
     <script type="text/javascript">
-      var emulator = new Emulator(document.querySelector("#canvas"),
-                                  null,
-                                  new DosBoxLoader(DosBoxLoader.emulatorJS("emulators/em-dosbox/dosbox-sync.js"),
-                                                   DosBoxLoader.locateAdditionalEmulatorJS(locateAdditionalFiles),
-                                                   DosBoxLoader.nativeResolution(640, 480),
-                                                   DosBoxLoader.mountZip("c",
-                                                                         DosBoxLoader.fetchFile("Game File",
-                                                                                                "examples/DoomV1.9sw1995idSoftwareInc.action.zip")),
-                                                   DosBoxLoader.startExe("doom.exe")))
-      emulator.start({ waitAfterDownloading: true, hasCustomCSS: true });
-      emulator.setSplashTitle("Loading game archive");
+      var controls = new EmulatorControls({
+        canvas: "#canvas",
+        fullscreenElement: "#playfield",
+        splashTitle: "Loading game archive",
+        buttons: {
+          start: "#start",
+          stop: "#stop",
+          restart: "#restart",
+          fullscreen: "#fullscreen"
+        },
+        // The host builds the loader — this is where V4 injects the download
+        // URL (with its token) and the exe to run. Called fresh on every Start.
+        createLoader: function () {
+          return new DosBoxLoader(DosBoxLoader.emulatorJS("emulators/em-dosbox/dosbox-sync.js"),
+                                  DosBoxLoader.locateAdditionalEmulatorJS(locateAdditionalFiles),
+                                  DosBoxLoader.nativeResolution(640, 480),
+                                  DosBoxLoader.mountZip("c",
+                                                        DosBoxLoader.fetchFile("Game File",
+                                                                               "examples/DoomV1.9sw1995idSoftwareInc.action.zip")),
+                                  DosBoxLoader.startExe("doom.exe"));
+        }
+      });
 
       function locateAdditionalFiles(filename) {
         if (filename === "dosbox.html.mem") {
