@@ -1,3 +1,8 @@
 *~
 \.\#*
-.be/id-cache 
+.be/id-cache
+
+# Locally decompressed em-dosbox engine. git-annex tracks the .gz files; these
+# plain copies are generated only to run the examples over a local HTTP server.
+emulators/em-dosbox/*.js
+emulators/em-dosbox/*.mem 
