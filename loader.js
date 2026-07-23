@@ -2070,8 +2070,10 @@ var Module = null;
                         }
                       }
 
+                      var emscriptenRunner = false;
                       if ("runner" in game_data) {
-                        if (game_data.runner == EmscriptenRunner || game_data.runner.prototype instanceof EmscriptenRunner) {
+                        emscriptenRunner = game_data.runner == EmscriptenRunner || game_data.runner.prototype instanceof EmscriptenRunner;
+                        if (emscriptenRunner) {
                           // this is a stupid hack. Emscripten-based
                           // apps currently need the runner to be set
                           // up first, then we can attach the
@@ -2083,7 +2085,12 @@ var Module = null;
 
                       if (game_data.emulatorJS) {
                         splash.setTitle("Launching Emulator");
-                        return attach_script(game_data.emulatorJS);
+                        // MAW: non-Emscripten engines (e.g. SAE) are singletons
+                        // reused across restarts — re-injecting their script
+                        // re-declares its top-level const/let and throws. Reuse
+                        // the already-loaded script. Emscripten engines must
+                        // re-run to re-instantiate Module, so never reuse those.
+                        return attach_script(game_data.emulatorJS, !emscriptenRunner);
                       } else {
                         splash.setTitle("Non-system disk or disk error");
                       }
@@ -2426,7 +2433,7 @@ var Module = null;
        }
      };
 
-     function attach_script(js_url) {
+     function attach_script(js_url, reuseIfLoaded) {
        return new Promise(function (resolve, reject) {
                             var newScript;
                             function loaded(e) {
@@ -2444,6 +2451,13 @@ var Module = null;
                               }
                             }
                             if (js_url) {
+                              // MAW: a non-Emscripten engine already in the page
+                              // is reused, not re-run — re-injecting it would
+                              // re-declare its top-level const/let and throw.
+                              if (reuseIfLoaded && document.querySelector('script[src="' + js_url + '"]')) {
+                                resolve();
+                                return;
+                              }
                               var head = document.getElementsByTagName('head')[0];
                               newScript = document.createElement('script');
                               newScript.addEventListener("load", loaded);
@@ -2518,7 +2532,10 @@ var Module = null;
     * misc
     */
    function getfullscreenenabler() {
-     return canvas.requestFullScreen || canvas.webkitRequestFullScreen || canvas.mozRequestFullScreen;
+     // MAW: prefer the modern standard requestFullscreen (lowercase s); the
+     // legacy prefixed names below no longer exist, so non-Emscripten runners
+     // (SAE, V86, Cloudpilot) would otherwise throw.
+     return canvas.requestFullscreen || canvas.requestFullScreen || canvas.webkitRequestFullScreen || canvas.mozRequestFullScreen;
    }
 
    // This is such a hack. We're not calling the BrowserFS api

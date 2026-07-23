@@ -1,0 +1,91 @@
+<!--
+ The Emularity: myabandonware.com branded example — Amiga (SAE)
+
+ Same branded setup as example_maw.html, but running the Scripted Amiga
+ Emulator: MAW splash + spinning logo, aggregate loading bar, boot-straight-in,
+ and the Start / Stop / Restart / Fullscreen controls.
+
+ Needs a real Kickstart 1.3 ROM at emulators/sae/ — it is copyrighted, so it is
+ NOT committed (*.rom is gitignored); supply your own. The Sqrxz disk boots from
+ emulators/sae/Sqrxz.adf.
+
+ Load order: es6-promise.js, browserfs.min.js, loader.js, emularity-controls.js.
+-->
+
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>example amiga game</title>
+    <link rel="stylesheet" href="emularity-maw.css">
+    <style>
+      /* Demo layout: centre the emulator, 80vw wide, classic 4:3. */
+      #playfield {
+        position: relative;          /* splash overlays the canvas; fullscreen target */
+        width: 80vw;
+        aspect-ratio: 4 / 3;
+        margin: 20px auto;
+      }
+      #canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #000;            /* black until the Amiga draws over it */
+        image-rendering: pixelated;
+      }
+      .c-emulator__controls {
+        justify-content: center;     /* buttons centred under the emulator */
+      }
+    </style>
+  </head>
+  <body>
+    <!-- the wrapper is the `c-emulator` block: positioned so the splash overlays
+         the canvas, and the target for the Firefox fullscreen fallback. The
+         canvas needs an id — the SAE engine looks it up by id. -->
+    <div id="playfield" class="c-emulator">
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="c-emulator__controls">
+      <button class="c-emulator__control c-emulator__control--start" id="start">Start</button>
+      <button class="c-emulator__control c-emulator__control--stop" id="stop">Stop</button>
+      <button class="c-emulator__control c-emulator__control--restart" id="restart">Restart</button>
+      <button class="c-emulator__control c-emulator__control--fullscreen" id="fullscreen">Fullscreen</button>
+    </div>
+
+    <script type="text/javascript" src="es6-promise.js"></script>
+    <script type="text/javascript" src="browserfs.min.js"></script>
+    <script type="text/javascript" src="loader.js"></script>
+    <script type="text/javascript" src="emularity-controls.js"></script>
+    <script type="text/javascript">
+      var controls = new EmulatorControls({
+        canvas: "#canvas",
+        fullscreenElement: "#playfield",
+        splashTitle: "Loading Amiga disk",
+        buttons: {
+          start: "#start",
+          stop: "#stop",
+          restart: "#restart",
+          fullscreen: "#fullscreen"
+        },
+        // The host builds the loader — this is where V4 would inject the download
+        // URL (with its token) and the disk to boot. Called fresh on every Start.
+        createLoader: function () {
+          return new SAELoader(SAELoader.model("A500"),
+                               SAELoader.nativeResolution(720, 568),
+                               SAELoader.scale(2),
+                               SAELoader.emulatorJS("emulators/sae/scriptedamigaemulator.js"),
+                               // Kickstart ROM: a real Amiga 1.3 Kickstart boots the
+                               // disk (the free AROS replacement does not). It is
+                               // copyrighted, so it is NOT committed (see *.rom in
+                               // .gitignore) — drop your own Kickstart here.
+                               SAELoader.mountFile("kickstart.rom",
+                                                   SAELoader.fetchFile("Kickstart", "emulators/sae/Kickstart%201.3.rom")),
+                               SAELoader.rom(["kickstart.rom"]),
+                               SAELoader.mountFile("Sqrxz.adf",
+                                                   SAELoader.fetchFile("Game", "emulators/sae/Sqrxz.adf")),
+                               SAELoader.floppy(0, "Sqrxz.adf"));   // must match the mountFile name above
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -154,7 +154,12 @@
 
   EmulatorControls.prototype.restart = function () {
     this.stop();
-    this.start();
+    // Some engines tear down asynchronously (e.g. SAE is a global singleton
+    // whose stop() quits on a later frame), so an immediate start() can hit an
+    // "already running" guard. Defer the restart briefly. Harmless for engines
+    // whose teardown is synchronous (DOSBox) — just a short blank.
+    var self = this;
+    setTimeout(function () { self.start(); }, 300);
     return this;
   };
 
