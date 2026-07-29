@@ -20,6 +20,48 @@
 var Module = null;
 
 (function (Promise) {
+   // MAW: where this fork's own assets (logo/, emulators/) live. Auto-detected
+   // from the URL loader.js itself was loaded from, so the host can mount the
+   // fork anywhere (e.g. /vendor/emularity/) and the defaults still resolve —
+   // a bare relative path would otherwise resolve against the page URL.
+   // Override at runtime with Emularity.setBasePath("/vendor/emularity/"), or
+   // per emulator with the basePath option to start().
+   var basePath = (function () {
+     var script = document.currentScript;
+     if (!script) {
+       var scripts = document.getElementsByTagName('script');
+       for (var i = scripts.length - 1; i >= 0; i--) {
+         if (scripts[i].src && /(^|\/)loader\.js(\?|#|$)/.test(scripts[i].src)) {
+           script = scripts[i];
+           break;
+         }
+       }
+     }
+     return script && script.src ? script.src.replace(/[^\/]*$/, '') : '';
+   })();
+
+   // Join the base path with a fork-relative asset path. Absolute URLs and
+   // absolute paths are passed through untouched.
+   function assetUrl(path, override) {
+     if (/^([a-z]+:)?\/\//i.test(path) || path.charAt(0) == '/') {
+       return path;
+     }
+     var base = typeof override === 'string' ? override : basePath;
+     if (base && base.charAt(base.length - 1) != '/') {
+       base += '/';
+     }
+     return base + path;
+   }
+
+   var Emularity = {
+     getBasePath: function () { return basePath; },
+     setBasePath: function (path) {
+       basePath = typeof path === 'string' ? path : '';
+       return this;
+     },
+     assetUrl: assetUrl
+   };
+
    /**
     * IALoader
     */
@@ -1883,7 +1925,12 @@ var Module = null;
          return false;
        has_started = true;
        var defaultOptions = { waitAfterDownloading: false,
-                              hasCustomCSS: false };
+                              hasCustomCSS: false,
+                              // MAW: where the fork's own assets live, and an
+                              // outright replacement for the splash logo. Both
+                              // default to the auto-detected base path.
+                              basePath: undefined,
+                              splashImage: undefined };
        if (typeof options !== 'object') {
          options = defaultOptions;
        } else {
@@ -1892,7 +1939,7 @@ var Module = null;
 
        var k, c, game_data;
        setupSplash(canvas, splash, options);
-       drawsplash();
+       drawsplash(options);
 
        var loading;
 
@@ -2424,12 +2471,17 @@ var Module = null;
        return [titleCell, statusCell];
      };
 
-     var drawsplash = function () {
+     var drawsplash = function (options) {
        canvas.setAttribute('moz-opaque', '');
        if (!splash.splashimg.src) {
          // MAW: default splash logo is the branded, spinning myabandonware logo
          // (styled/animated by emularity-maw.css when hasCustomCSS is true).
-         splash.splashimg.src = "logo/maw.png";
+         // Resolved against the base path so it works wherever the fork is
+         // mounted; the splashImage option replaces it outright.
+         options = options || {};
+         splash.splashimg.src = options.splashImage
+                              ? assetUrl(options.splashImage, options.basePath)
+                              : assetUrl("logo/maw.png", options.basePath);
        }
      };
 
@@ -2718,6 +2770,7 @@ var Module = null;
    window.RuffleLoader = RuffleLoader;
    window.CloudpilotLoader = CloudpilotLoader;
    window.Emulator = Emulator;
+   window.Emularity = Emularity; // MAW: runtime config (base path for assets)
    window._SDL_CreateRGBSurfaceFrom = _SDL_CreateRGBSurfaceFrom;
  })(typeof Promise === 'undefined' ? ES6Promise.Promise : Promise);
 

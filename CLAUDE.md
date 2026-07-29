@@ -20,7 +20,7 @@ playstats, view templates, per-game screenshot, and app DOM live in the V4 app
 - **`emularity-maw.css`** — the theme. Styles the engine's `emularity-*` splash classes (branded logo spinning via `@keyframes spinner` on `.emularity-splash-image`, a `.emularity-splash-title` top bar) plus the new BEM `c-emulator` classes for the loading bar, controls, and fullscreen fallback. Activated by passing `hasCustomCSS: true` to `emulator.start(...)` (stock flag that makes the loader skip its inline styles). Splash styling was ported from V3's `www3` `game.scss`, retargeting V3's ID selectors to classes.
 - **`logo/maw.png`** — the MAW logo, used as the default splash image.
 - **`loader.js` deltas from upstream** (search for `MAW:`):
-  - `drawsplash()` defaults the splash image to `logo/maw.png`.
+  - `drawsplash()` defaults the splash image to `logo/maw.png`, resolved through `assetUrl()` against a `basePath` auto-detected from the URL `loader.js` was loaded from. This is what lets the host mount the fork under any prefix (V4 serves it from `/vendor/emularity/` while the page lives at `/game/…/play`) — a bare relative path would resolve against the page URL and 404. Overridable globally via `window.Emularity.setBasePath(...)` or per emulator with the `basePath` / `splashImage` options to `start()`.
   - `Emulator.setSplashTitle(title)` — sets the title-bar text after `start()`.
   - An **aggregate loading bar**: `_fetch_file` records each download in the `requests` array; `updateProgress()` sums them and drives `.c-emulator__progress*` (created in `setupSplash`, **only when `hasCustomCSS` is true** — stock users keep the per-file table unchanged).
   - `Emulator.stop()` — aborts in-flight XHRs and calls `runner.stop()`.

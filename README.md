@@ -26,7 +26,14 @@ This fork carries the [myabandonware.com](https://www.myabandonware.com) look fo
   emulator.start({ waitAfterDownloading: false, hasCustomCSS: true });
   emulator.setSplashTitle("Loading game archive");
   ```
-* **`logo/maw.png`** is the default splash image, so no logo config is needed.
+* **`logo/maw.png`** is the default splash image, so no logo config is needed. Its URL resolves against the path `loader.js` itself was loaded from, so mounting the fork under any prefix (e.g. `/vendor/emularity/`) just works — a page at `/game/doom/play` still finds the logo. Override with the `basePath` option if the guess is wrong, or replace the image outright with `splashImage`:
+
+  ```js
+  Emularity.setBasePath("/vendor/emularity/");   // global, or …
+  emulator.start({ hasCustomCSS: true, basePath: "/vendor/emularity/" });
+  emulator.start({ hasCustomCSS: true, splashImage: "/img/game-123.png" });
+  ```
+  Absolute paths and full URLs are used as-is. `Emularity.getBasePath()` reports the detected value.
 * **`emulator.setSplashTitle(text)`** sets the title-bar text after `start()`.
 * **A real loading bar.** In `hasCustomCSS` mode the loader tracks every download and drives a single fill bar with an "X / Y (NN%)" label (`.c-emulator__progress`). Stock mode is untouched — it keeps the per-file table.
 * The splash element is appended to the canvas's parent, so give that parent `position: relative` for the overlay to sit over the canvas. The host may set a per-game screenshot as the splash background on the splash element itself.

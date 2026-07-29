@@ -13,8 +13,14 @@
  *     buttons:           { start, stop, restart, fullscreen }, // els or selectors
  *     splashTitle:       "Loading game archive",
  *     hasCustomCSS:      true,                // default true
- *     fullscreenElement: "#playfield"         // wrapper toggled for the FF fallback
+ *     fullscreenElement: "#playfield",        // wrapper toggled for the FF fallback
+ *     basePath:          "/vendor/emularity/",// where the fork's assets are served
+ *     splashImage:       "/img/game-123.png"  // replaces the default MAW logo
  *   });
+ *
+ * basePath is only needed if the auto-detection is wrong: by default the fork's
+ * own assets (the splash logo) resolve against the URL loader.js was loaded
+ * from, so mounting the fork under any prefix just works.
  */
 (function () {
   "use strict";
@@ -56,6 +62,10 @@
     }
     this.splashTitle = options.splashTitle || null;
     this.hasCustomCSS = options.hasCustomCSS !== false; // default true
+    // Where the fork's assets are served from, and an optional replacement for
+    // the splash logo. Omit basePath to use the path loader.js was loaded from.
+    this.basePath = options.basePath;
+    this.splashImage = options.splashImage;
     this.fullscreenElement = resolve(options.fullscreenElement);
     this.onStateChange = options.onStateChange || null;
 
@@ -124,7 +134,10 @@
       this.createLoader()
     );
     // Boot straight into the game once downloaded — no "press any key" gate.
-    this.emulator.start({ waitAfterDownloading: false, hasCustomCSS: this.hasCustomCSS });
+    this.emulator.start({ waitAfterDownloading: false,
+                          hasCustomCSS: this.hasCustomCSS,
+                          basePath: this.basePath,
+                          splashImage: this.splashImage });
     if (this.splashTitle) {
       this.emulator.setSplashTitle(this.splashTitle);
     }
