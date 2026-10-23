@@ -59,7 +59,12 @@ var Module = null;
        basePath = typeof path === 'string' ? path : '';
        return this;
      },
-     assetUrl: assetUrl
+     assetUrl: assetUrl,
+     // MAW: a save store name for one version of a game. Stores sharing the
+     // "<gameId>@" start are versions of one game; see BaseLoader.saveStore.
+     storeKey: function (gameId, hash) {
+       return gameId + '@' + (hash || 'unversioned');
+     }
    };
 
    /**
@@ -837,6 +842,14 @@ var Module = null;
      return { fileSystemKey: key };
    };
 
+   // MAW: one save store per version of a game (hash: e.g. the archive's
+   // md5). When the hash changes, the first boot brings the saves over from
+   // the old store, fitted to the new layout, and deletes it.
+   BaseLoader.saveStore = function (gameId, hash) {
+     return { fileSystemKey: Emularity.storeKey(gameId, hash),
+              fileSystemFamily: gameId + '@' };
+   };
+
    BaseLoader.nativeResolution = function (width, height) {
      if (typeof width !== 'number' || typeof height !== 'number')
        throw new Error("Width and height must be numbers");
@@ -1335,6 +1348,11 @@ var Module = null;
    EmscriptenRunner.prototype.start = function () {
    };
 
+   // MAW: engines advertise whether they can really freeze and resume. This one
+   // cannot: pause() is a no-op here, and the sync EM-DOSBox build's main loop
+   // can be frozen but not restarted. Emulator.pause() checks this so callers
+   // never get a pause that silently does nothing (or cannot be undone).
+   EmscriptenRunner.prototype.canPause = false;
    EmscriptenRunner.prototype.pause = function () {
    };
 
@@ -1499,8 +1517,11 @@ var Module = null;
      var err = this._sae.start();
    };
 
-   SAERunner.prototype.pause = function () {
-     this._sae.pause();
+   // MAW: the engine's pause() is a toggle — pause(true) freezes, pause(false)
+   // resumes. Calling it with no argument (as this did) could only ever resume.
+   SAERunner.prototype.canPause = true;
+   SAERunner.prototype.pause = function (state) {
+     this._sae.pause(state === undefined ? true : !!state);
    };
 
    SAERunner.prototype.stop = function () {
@@ -1794,6 +1815,75 @@ var Module = null;
      var runner;
 
      var muted = false;
+     var paused = false;
+
+     // MAW: this game's save store, set once start() has built the file
+     // system: fs is the writable layer (the saves), overlay what the game
+     // sees, keep/skip the files in fs that aren't saves, drives the mounted
+     // drive folders, tree the shipped layout (once the zips are mounted).
+     var store = null;
+
+     function ready_store() {
+       return store && store.tree ? Promise.resolve(store)
+                                  : Promise.reject(new Error("The game's file system is not ready yet"));
+     }
+
+     this.isFileSystemReady = function () { return !!(store && store.tree); };
+
+     // MAW: the saves as a .zip Blob. Works while running and after stop().
+     this.exportSaves = function () {
+       return ready_store().then(export_saves);
+     };
+
+     // MAW: writes a zip from exportSaves() back into the save store, fitting
+     // paths to this archive if the zip came from another version. Resolves
+     // with { count, moved, kept, parked }. The running game won't notice
+     // (DOSBox caches directories), so restart it.
+     this.importSaves = function (zip) {
+       return ready_store().then(function (s) { return import_saves(s, zip); });
+     };
+
+     // MAW: the game's disk (shipped files plus the player's changes) as a
+     // .zip Blob.
+     this.exportDisk = function () {
+       return ready_store().then(export_disk);
+     };
+
+     // MAW: puts the shipped files back, keeping files the game made. Call it
+     // after stop(), then boot a new Emulator.
+     this.resetGameFiles = function () {
+       return ready_store().then(function (s) {
+         return settle(s).then(function () { return reset_game_files(s); });
+       });
+     };
+
+     // MAW: deletes everything the player changed or made. Call it after
+     // stop(), then boot a new Emulator.
+     this.resetSaves = function () {
+       return ready_store().then(function (s) {
+         return settle(s).then(function () { return reset_saves(s); });
+       });
+     };
+
+     // MAW: freeze the emulation in place, keeping the session alive (unlike
+     // stop(), which tears it down). Only engines that advertise canPause can
+     // do this — canPause() reports whether it is available, so a host can hide
+     // or disable its Pause control instead of offering one that does nothing.
+     this.canPause = function () { return !!(runner && runner.canPause); };
+     this.isPaused = function () { return paused; };
+     this.pause = function () { return this.setPause(true); };
+     this.resume = function () { return this.setPause(false); };
+     this.togglePause = function () { return this.setPause(!paused); };
+     this.setPause = function (state) {
+       state = !!state;
+       if (!this.canPause() || state === paused) {
+         return this;
+       }
+       runner.pause(state);
+       paused = state;
+       return this;
+     };
+
      var SDL_PauseAudio;
      this.isMuted = function () { return muted; };
      this.mute = function () { return this.setMute(true); };
@@ -1912,6 +2002,7 @@ var Module = null;
        if (runner) {
          try { runner.stop(); } catch (e) {}
        }
+       paused = false;
        return this;
      };
 
@@ -1950,16 +2041,16 @@ var Module = null;
        }
        loading.then(function (_game_data) {
                       return new Promise(function(resolve, reject) {
+                        var storeKey = "fileSystemKey" in _game_data ? _game_data.fileSystemKey
+                                                                     : "emularity";
                         var InMemoryFS = BrowserFS.FileSystem.InMemory;
                         InMemoryFS.Create(function (e, inMemory) {
                           // If the browser supports IndexedDB storage, mirror writes to that storage
                           // for persistence purposes.
                           if (BrowserFS.FileSystem.IndexedDB.isAvailable()) {
                             var AsyncMirrorFS = BrowserFS.FileSystem.AsyncMirror,
-                                IndexedDBFS = BrowserFS.FileSystem.IndexedDB,
-                                fileSystemKey = "fileSystemKey" in _game_data ? _game_data.fileSystemKey
-                                                                              : "emularity";
-                            IndexedDBFS.Create({ storeName: fileSystemKey },
+                                IndexedDBFS = BrowserFS.FileSystem.IndexedDB;
+                            IndexedDBFS.Create({ storeName: storeKey },
                                                function(e, idbfs) {
                                                  if (e) {
                                                    finish(e, inMemory);
@@ -1993,6 +2084,16 @@ var Module = null;
                                                  reject();
                                                } else {
                                                  game_data.fs = fs;
+                                                 store = { fs: deltaFS,
+                                                           overlay: fs,
+                                                           keep: game_data.files
+                                                                          .filter(function (f) { return f && f.file && !f.drive && f.mountpoint; })
+                                                                          .map(function (f) { return f.mountpoint[0] != '/' ? '/'+ f.mountpoint : f.mountpoint; }),
+                                                           drives: game_data.files
+                                                                            .filter(function (f) { return f && f.file && f.drive; })
+                                                                            .map(function (f) { return f.drive.toLowerCase(); }),
+                                                           tree: null };
+                                                 store.skip = SAVES_SKIP.concat(store.keep);
                                                  function fetch(file) {
                                                    var isCached = 'cached' in file && file.cached,
                                                        hasData = 'data' in file && file.data !== null && typeof file.data !== 'undefined';
@@ -2058,7 +2159,23 @@ var Module = null;
                                                  if ('emulatorWASM' in game_data && game_data.emulatorWASM && 'WebAssembly' in window) {
                                                    promises.push(fetch({ title: "WASM Binary", url: game_data.emulatorWASM }).then(function (data) { game_data.wasmBinary = data; }));
                                                  }
-                                                 Promise.all(promises).then(resolve, reject);
+                                                 Promise.all(promises)
+                                                        .then(function () {
+                                                                // MAW: what the archive ships, then any saves
+                                                                // from an older version of the game.
+                                                                store.tree = list_tree(mountable);
+                                                                return prepare_store(store, storeKey, game_data.fileSystemFamily);
+                                                              })
+                                                        .then(function (report) {
+                                                                if (report && callbacks && typeof callbacks.saves_migrated === 'function') {
+                                                                  try {
+                                                                    callbacks.saves_migrated(report);
+                                                                  } catch (x) {
+                                                                    console.log(x);
+                                                                  }
+                                                                }
+                                                              })
+                                                        .then(resolve, reject);
                                                }
                                              });
                           });
@@ -2646,6 +2763,758 @@ var Module = null;
                         fs.readFileSync(dosboxConfPath, null, flag_r),
                         null, flag_w, 0x1a4);
      }
+   };
+
+   /**
+    * MAW: savegame export / import.
+    *
+    * The game itself sits in read-only zip mounts; everything it writes lands
+    * in the OverlayFS's writable layer (the deltaFS that start() mirrors to
+    * IndexedDB). So that layer holds the player's saves, and zipping it up
+    * exports them. Zip paths keep the drive folder, e.g. c/DOOM/DOOMSAV0.DSG.
+    */
+   // Where a store records the archive layout it was made against.
+   var MANIFEST = '/.emularity-store.json';
+   // OverlayFS bookkeeping, the copy moveConfigToRoot() makes and the
+   // manifest; not saves.
+   var SAVES_SKIP = ['/.deletedFiles.log', '/dosbox.conf', MANIFEST];
+
+   function is_skipped(path, skip) {
+     path = path.toLowerCase();
+     return skip.some(function (p) { return p.toLowerCase() === path; });
+   }
+
+   var crc_table = null;
+   function crc32(bytes) {
+     if (!crc_table) {
+       crc_table = new Uint32Array(256);
+       for (var n = 0; n < 256; n++) {
+         var c = n;
+         for (var k = 0; k < 8; k++) {
+           c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+         }
+         crc_table[n] = c >>> 0;
+       }
+     }
+     var crc = 0xffffffff;
+     for (var i = 0; i < bytes.length; i++) {
+       crc = crc_table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+     }
+     return (crc ^ 0xffffffff) >>> 0;
+   }
+
+   function utf8_bytes(str) {
+     var s = unescape(encodeURIComponent(str)),
+         out = new Uint8Array(s.length);
+     for (var i = 0; i < s.length; i++) {
+       out[i] = s.charCodeAt(i);
+     }
+     return out;
+   }
+
+   // Builds a .zip Blob from { path, data: Uint8Array, date } entries, or
+   // { path, dir: true } for a folder. Files are stored, not compressed:
+   // saves are small, and this keeps it short.
+   function make_zip(entries) {
+     var parts = [], central = [], offset = 0, centralSize = 0;
+     entries.forEach(function (entry) {
+       var name = utf8_bytes(entry.dir ? entry.path + '/' : entry.path),
+           data = entry.dir ? new Uint8Array(0) : entry.data,
+           crc = crc32(data),
+           d = entry.date instanceof Date ? entry.date : new Date(),
+           time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
+           date = ((Math.max(d.getFullYear(), 1980) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+
+       var local = new DataView(new ArrayBuffer(30));
+       local.setUint32(0, 0x04034b50, true);
+       local.setUint16(4, 20, true);      // version needed to extract
+       local.setUint16(6, 0x0800, true);  // flags: names are UTF-8
+       local.setUint16(8, 0, true);       // method: stored
+       local.setUint16(10, time, true);
+       local.setUint16(12, date, true);
+       local.setUint32(14, crc, true);
+       local.setUint32(18, data.length, true);
+       local.setUint32(22, data.length, true);
+       local.setUint16(26, name.length, true);
+       parts.push(local.buffer, name, data);
+
+       var dir = new DataView(new ArrayBuffer(46));
+       dir.setUint32(0, 0x02014b50, true);
+       dir.setUint16(4, 20, true);        // version made by
+       dir.setUint16(6, 20, true);
+       dir.setUint16(8, 0x0800, true);
+       dir.setUint16(10, 0, true);
+       dir.setUint16(12, time, true);
+       dir.setUint16(14, date, true);
+       dir.setUint32(16, crc, true);
+       dir.setUint32(20, data.length, true);
+       dir.setUint32(24, data.length, true);
+       dir.setUint16(28, name.length, true);
+       dir.setUint32(38, entry.dir ? 0x10 : 0, true); // MS-DOS folder flag
+       dir.setUint32(42, offset, true);   // where the local header starts
+       central.push(dir.buffer, name);
+
+       centralSize += 46 + name.length;
+       offset += 30 + name.length + data.length;
+     });
+     var end = new DataView(new ArrayBuffer(22));
+     end.setUint32(0, 0x06054b50, true);
+     end.setUint16(8, entries.length, true);
+     end.setUint16(10, entries.length, true);
+     end.setUint32(12, centralSize, true);
+     end.setUint32(16, offset, true);
+     return new Blob(parts.concat(central, [end.buffer]), { type: 'application/zip' });
+   }
+
+   // Calls visit(path, stat) for every file and folder below `root` of a
+   // synchronous BrowserFS file system, each folder before what it holds.
+   function walk_fs(fs, root, visit) {
+     (function walk(dir) {
+       fs.readdirSync(dir).forEach(function (item) {
+         if (item === '.' || item === '..') {
+           return;
+         }
+         var path = (dir === '/' ? '' : dir) + '/' + item,
+             stat = fs.statSync(path, false);
+         visit(path, stat);
+         if (stat.isDirectory()) {
+           walk(path);
+         }
+       });
+     })(root || '/');
+   }
+
+   // Lists every file below `root` as zip entries (paths lose the leading /),
+   // and every folder too when withDirs is set.
+   function collect_files(fs, skip, root, withDirs) {
+     var entries = [];
+     walk_fs(fs, root, function (path, stat) {
+       if (stat.isDirectory()) {
+         if (withDirs) {
+           entries.push({ path: path.substring(1), dir: true, date: stat.mtime });
+         }
+       } else if (!is_skipped(path, skip)) {
+         entries.push({ path: path.substring(1),
+                        data: new Uint8Array(fs.readFileSync(path, null, flag_r)),
+                        date: stat.mtime });
+       }
+     });
+     return entries;
+   }
+
+   // The layout of the read-only layer, as { "/c/DOOM": ["DOOM.EXE", ...] }:
+   // one key per folder, listing the files directly in it.
+   function list_tree(fs) {
+     var tree = {};
+     walk_fs(fs, '/', function (path, stat) {
+       var cut = path.lastIndexOf('/'),
+           dir = path.substring(0, cut);
+       if (stat.isDirectory()) {
+         tree[path] = tree[path] || [];
+       } else if (dir) {
+         (tree[dir] = tree[dir] || []).push(path.substring(cut + 1));
+       }
+     });
+     return tree;
+   }
+
+   // The tree's file paths, lower case, as a lookup table.
+   function shipped_files(tree) {
+     var shipped = {};
+     Object.keys(tree || {}).forEach(function (dir) {
+       tree[dir].forEach(function (name) {
+         shipped[(dir + '/' + name).toLowerCase()] = true;
+       });
+     });
+     return shipped;
+   }
+
+   function write_files(fs, entries, skip) {
+     var Buffer = BrowserFS.BFSRequire('buffer').Buffer,
+         count = 0;
+     entries.forEach(function (entry) {
+       var path = '/' + entry.path.replace(/^\/+/, '');
+       if (is_skipped(path, skip)) {
+         return;
+       }
+       var parts = path.substring(1).split('/');
+       for (var i = 1; i < parts.length; i++) {
+         var dir = '/' + parts.slice(0, i).join('/');
+         if (!fs.existsSync(dir)) {
+           fs.mkdirSync(dir, 0777);
+         }
+       }
+       // flag_w doesn't truncate, so a shorter file would keep the old tail.
+       if (fs.existsSync(path)) {
+         fs.unlinkSync(path);
+       }
+       fs.writeFileSync(path, new Buffer(entry.data), null, flag_w, 0644);
+       count++;
+     });
+     return count;
+   }
+
+   function read_manifest(fs) {
+     try {
+       return JSON.parse(fs.readFileSync(MANIFEST, 'utf8', flag_r));
+     } catch (e) {
+       return null;
+     }
+   }
+
+   function write_manifest(fs, manifest) {
+     var Buffer = BrowserFS.BFSRequire('buffer').Buffer;
+     if (fs.existsSync(MANIFEST)) {
+       fs.unlinkSync(MANIFEST);
+     }
+     fs.writeFileSync(MANIFEST, new Buffer(JSON.stringify(manifest)), null, flag_w, 0644);
+   }
+
+   /**
+    * MAW: works out where saves made against one archive layout belong in
+    * another, e.g. after an admin repacked the game from C:\GAMES\DOOM into
+    * C:\DOOM. oldTree and newTree are list_tree() results (oldTree may be
+    * null); paths are the files to place, with a leading slash. Returns
+    * { path: { path: target, parked: bool } }.
+    *
+    * Each folder maps to the first rule that gives one clear answer:
+    *   - a folder the old archive shipped goes where most of its files went;
+    *   - a folder the game made goes inside wherever its parent went;
+    *   - a folder inside the old game root goes to the same place inside the
+    *     new one (see exe_root below);
+    *   - else the new folder ending in the most of the same folder names;
+    *   - else it stays where it was.
+    * A file that would cover a file the new archive ships, or one listed in
+    * `taken`, is parked in /<drive>/OLDSAVES/<old path> instead, so it never
+    * breaks the new game and the player can still find it.
+    */
+   function map_save_paths(oldTree, newTree, paths, taken) {
+     function lower_index(tree) {
+       var index = {};
+       Object.keys(tree || {}).forEach(function (dir) {
+         index[dir.toLowerCase()] = dir;
+       });
+       return index;
+     }
+     // The folder names below the drive, e.g. /c/GAMES/DOOM -> [games, doom].
+     function segments(dir) {
+       return dir.toLowerCase().split('/').slice(2);
+     }
+     var oldIndex = lower_index(oldTree),
+         newIndex = lower_index(newTree),
+         newDirs = Object.keys(newTree || {}),
+         shipped = shipped_files(newTree),
+         memo = {};
+
+     // The new folder with the top score, or null unless one clearly wins.
+     // A tie that includes `prefer` goes to it.
+     function best(score, prefer) {
+       var top = 0, winners = [];
+       newDirs.forEach(function (dir) {
+         var s = score(dir);
+         if (s > top) {
+           top = s;
+           winners = [dir];
+         } else if (s > 0 && s === top) {
+           winners.push(dir);
+         }
+       });
+       if (winners.length === 1) {
+         return winners[0];
+       }
+       return prefer && winners.indexOf(prefer) !== -1 ? prefer : null;
+     }
+
+     // The game's root folder in each archive: where the shallowest .exe
+     // that both ship under the same name sits. That is usually the game's
+     // own .exe, sometimes a helper like DOS4GW.EXE. A name found twice at
+     // its shallowest depth in either archive is no help; a tie between
+     // names that disagree on the roots leaves no root at all.
+     function exe_root() {
+       function shallowest(tree) {
+         var found = {};
+         Object.keys(tree || {}).forEach(function (dir) {
+           var depth = dir.split('/').length;
+           tree[dir].forEach(function (name) {
+             var key = name.toLowerCase(),
+                 seen = found[key];
+             if (!/\.exe$/.test(key)) {
+               return;
+             }
+             if (!seen || depth < seen.depth) {
+               found[key] = { depth: depth, dirs: [dir] };
+             } else if (depth === seen.depth) {
+               seen.dirs.push(dir);
+             }
+           });
+         });
+         return found;
+       }
+       var olds = shallowest(oldTree),
+           news = shallowest(newTree),
+           pick = null, top = Infinity, clash = false;
+       Object.keys(olds).forEach(function (name) {
+         var o = olds[name], n = news[name];
+         if (!n || o.dirs.length > 1 || n.dirs.length > 1) {
+           return;
+         }
+         var score = o.depth + n.depth,
+             roots = { from: o.dirs[0], to: n.dirs[0] };
+         if (score < top) {
+           top = score;
+           pick = roots;
+           clash = false;
+         } else if (score === top &&
+                    (pick.from.toLowerCase() !== roots.from.toLowerCase() ||
+                     pick.to.toLowerCase() !== roots.to.toLowerCase())) {
+           clash = true;
+         }
+       });
+       return clash ? null : pick;
+     }
+     var root = oldTree ? exe_root() : null;
+
+     function map_dir(dir) {
+       var key = dir.toLowerCase();
+       if (key in memo) {
+         return memo[key];
+       }
+       var same = newIndex[key] || null,
+           known = oldIndex[key] ? oldTree[oldIndex[key]] : null,
+           segs = segments(dir),
+           found = null;
+       function by_parent() {
+         var cut = dir.lastIndexOf('/'),
+             parent = map_dir(dir.substring(0, cut)),
+             mapped = parent ? parent + dir.substring(cut) : null;
+         return mapped ? newIndex[mapped.toLowerCase()] || mapped : null;
+       }
+       function by_root() {
+         var from = root.from.toLowerCase(),
+             mapped;
+         if (key !== from && key.indexOf(from + '/') !== 0) {
+           return null;
+         }
+         mapped = root.to + dir.substring(root.from.length);
+         return newIndex[mapped.toLowerCase()] || mapped;
+       }
+       function by_names() {
+         return best(function (d) {
+                       var other = segments(d), n = 0;
+                       while (n < segs.length && n < other.length &&
+                              segs[segs.length - 1 - n] === other[other.length - 1 - n]) {
+                         n++;
+                       }
+                       return n;
+                     }, same);
+       }
+       memo[key] = same;
+       if (known && known.length > 0) {
+         var names = {};
+         known.forEach(function (name) { names[name.toLowerCase()] = true; });
+         found = best(function (d) {
+                        return newTree[d].filter(function (name) {
+                                                   return names[name.toLowerCase()];
+                                                 }).length;
+                      }, same);
+       } else if (!known && oldTree && segs.length > 0) {
+         found = by_parent();
+       }
+       if (!found && root) {
+         found = by_root();
+       }
+       if (!found && segs.length > 0) {
+         found = by_names();
+       }
+       // With no old layout to go on, a folder no name matches still follows
+       // its parent.
+       if (!found && !oldTree && segs.length > 0) {
+         found = by_parent();
+       }
+       return (memo[key] = found || same);
+     }
+
+     var result = {};
+     paths.forEach(function (path) {
+       var cut = path.lastIndexOf('/'),
+           dir = path.substring(0, cut),
+           parts = path.split('/'),
+           target = (dir && map_dir(dir) || dir) + path.substring(cut),
+           lower = target.toLowerCase(),
+           parked = parts.length > 2 && !!(shipped[lower] || (taken && taken[lower]));
+       if (parked) {
+         target = '/' + parts[1] + '/OLDSAVES/' + parts.slice(2).join('/');
+       }
+       result[path] = { path: target, parked: parked };
+     });
+     return result;
+   }
+
+   // Writes saves made against oldTree into the store, at the paths
+   // map_save_paths() picks for them. With keepExisting, files already in the
+   // store are never overwritten (their newcomers get parked).
+   function place_saves(store, entries, oldTree, keepExisting) {
+     var taken = null;
+     if (keepExisting) {
+       taken = {};
+       walk_fs(store.fs, '/', function (path, stat) {
+         if (!stat.isDirectory()) {
+           taken[path.toLowerCase()] = true;
+         }
+       });
+     }
+     var placed = map_save_paths(oldTree, store.tree,
+                                 entries.map(function (e) { return '/' + e.path; }),
+                                 taken),
+         report = { moved: [], kept: [], parked: [] };
+     entries.forEach(function (entry) {
+       var from = '/' + entry.path,
+           to = placed[from];
+       entry.path = to.path.substring(1);
+       if (to.parked) {
+         report.parked.push([from, to.path]);
+       } else if (to.path !== from) {
+         report.moved.push([from, to.path]);
+       } else {
+         report.kept.push(from);
+       }
+     });
+     report.count = write_files(store.fs, entries, store.skip);
+     return report;
+   }
+
+   function to_array_buffer(data) {
+     if (data instanceof ArrayBuffer) {
+       return Promise.resolve(data);
+     }
+     if (ArrayBuffer.isView(data)) {
+       return Promise.resolve(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+     }
+     return new Promise(function (resolve, reject) {
+       var reader = new FileReader();
+       reader.onload = function () { resolve(reader.result); };
+       reader.onerror = function () { reject(reader.error); };
+       reader.readAsArrayBuffer(data);
+     });
+   }
+
+   function read_zip(data) {
+     return to_array_buffer(data).then(function (buffer) {
+       var Buffer = BrowserFS.BFSRequire('buffer').Buffer;
+       return new Promise(function (resolve, reject) {
+         BrowserFS.FileSystem.ZipFS.Create({ zipData: new Buffer(buffer) },
+                                           function (e, zipfs) {
+                                             if (e) {
+                                               reject(new Error("Not a valid zip file"));
+                                             } else {
+                                               resolve(collect_files(zipfs, []));
+                                             }
+                                           });
+       });
+     });
+   }
+
+   // AsyncMirror copies writes to IndexedDB in the background; wait until it
+   // has caught up, so a reload or a fresh boot sees the imported files.
+   function when_flushed(fs) {
+     return new Promise(function (resolve) {
+       (function check() {
+         if (fs && fs._queue && (fs._queueRunning || fs._queue.length > 0)) {
+           setTimeout(check, 50);
+         } else {
+           resolve();
+         }
+       })();
+     });
+   }
+
+   // OverlayFS also writes its deletion log in the background. Wait for it
+   // and for IndexedDB before editing the store under a stopped game.
+   function settle(store) {
+     var inner = store.overlay && store.overlay._fs ? store.overlay._fs : store.overlay;
+     return new Promise(function (resolve) {
+       (function check() {
+         if (inner && inner._deleteLogUpdatePending) {
+           setTimeout(check, 50);
+         } else {
+           resolve();
+         }
+       })();
+     }).then(function () { return when_flushed(store.fs); });
+   }
+
+   // The saves as a zip. The manifest rides along, so an import into a later
+   // version of the game can fit the paths to its layout.
+   function export_saves(store) {
+     return new Promise(function (resolve, reject) {
+       var entries = collect_files(store.fs, store.skip),
+           manifest = read_manifest(store.fs);
+       if (entries.length === 0) {
+         reject(new Error("No saves found"));
+         return;
+       }
+       if (manifest) {
+         entries.push({ path: MANIFEST.substring(1),
+                        data: utf8_bytes(JSON.stringify(manifest)) });
+       }
+       resolve(make_zip(entries));
+     });
+   }
+
+   // Zips made against another archive layout (another manifest key) are
+   // fitted to this one; others go back exactly where they were.
+   function import_saves(store, zip) {
+     return read_zip(zip).then(function (entries) {
+       var theirs = null,
+           ours = read_manifest(store.fs),
+           report;
+       entries = entries.filter(function (entry) {
+         if ('/' + entry.path === MANIFEST) {
+           try {
+             theirs = JSON.parse(new TextDecoder().decode(entry.data));
+           } catch (e) {}
+           return false;
+         }
+         return true;
+       });
+       if (theirs && theirs.dirs && store.tree && !(ours && ours.key === theirs.key)) {
+         report = place_saves(store, entries, theirs.dirs, false);
+         report.from = theirs.key;
+       } else {
+         report = { moved: [], parked: [],
+                    kept: entries.map(function (e) { return '/' + e.path; }),
+                    count: write_files(store.fs, entries, store.skip) };
+       }
+       if (report.count === 0) {
+         throw new Error("The zip holds no files to import");
+       }
+       return when_flushed(store.fs).then(function () { return report; });
+     });
+   }
+
+   // The whole disk as the game sees it: shipped files with the player's
+   // changes on top, folders included.
+   function export_disk(store) {
+     return new Promise(function (resolve, reject) {
+       var entries = [];
+       store.drives.forEach(function (drive) {
+         entries = entries.concat(collect_files(store.overlay, [], '/' + drive, true));
+       });
+       if (entries.length === 0) {
+         reject(new Error("This game has no disk to download"));
+       } else {
+         resolve(make_zip(entries));
+       }
+     });
+   }
+
+   // Drops the player's copies of shipped files and forgets deleted ones, so
+   // the game files are as shipped again. Files the game made stay.
+   function reset_game_files(store) {
+     if (!store.tree) {
+       return Promise.reject(new Error("This game hasn't been run yet"));
+     }
+     var shipped = shipped_files(store.tree),
+         files = [];
+     walk_fs(store.fs, '/', function (path, stat) {
+       if (!stat.isDirectory() && shipped[path.toLowerCase()]) {
+         files.push(path);
+       }
+     });
+     files.forEach(function (path) { store.fs.unlinkSync(path); });
+     if (store.fs.existsSync('/.deletedFiles.log')) {
+       store.fs.unlinkSync('/.deletedFiles.log');
+     }
+     return when_flushed(store.fs).then(function () { return files.length; });
+   }
+
+   // Empties the store, bar the manifest and the files mountFile() copied in.
+   function reset_saves(store) {
+     var keep = {}, files = [], dirs = [];
+     [MANIFEST].concat(store.keep).forEach(function (path) { keep[path.toLowerCase()] = true; });
+     walk_fs(store.fs, '/', function (path, stat) {
+       (stat.isDirectory() ? dirs : files).push(path);
+     });
+     files = files.filter(function (path) { return !keep[path.toLowerCase()]; });
+     files.forEach(function (path) { store.fs.unlinkSync(path); });
+     // Deepest first, so a folder is empty by the time its turn comes.
+     dirs.reverse().forEach(function (dir) {
+       try {
+         if (store.fs.readdirSync(dir).length === 0) {
+           store.fs.rmdirSync(dir);
+         }
+       } catch (e) {}
+     });
+     return when_flushed(store.fs).then(function () { return files.length; });
+   }
+
+   // Opens the IndexedDB save store for a fileSystemKey on its own, the same
+   // way start() does, so saves can be handled without booting the game.
+   function open_saves_store(key) {
+     return new Promise(function (resolve, reject) {
+       var IndexedDBFS = BrowserFS.FileSystem.IndexedDB;
+       if (!IndexedDBFS.isAvailable()) {
+         reject(new Error("IndexedDB is not available"));
+         return;
+       }
+       IndexedDBFS.Create({ storeName: key || "emularity" }, function (e, idbfs) {
+         if (e) {
+           reject(e);
+           return;
+         }
+         BrowserFS.FileSystem.InMemory.Create(function (e, inMemory) {
+           if (e) {
+             reject(e);
+             return;
+           }
+           BrowserFS.FileSystem.AsyncMirror.Create({ sync: inMemory, async: idbfs },
+                                                   function (e, fs) {
+                                                     if (e) {
+                                                       reject(e);
+                                                     } else {
+                                                       resolve(fs);
+                                                     }
+                                                   });
+         });
+       });
+     });
+   }
+
+   // Lets go of the IndexedDB connection, so the store can be deleted.
+   function close_store(fs) {
+     try {
+       fs._async.store.db.close();
+     } catch (e) {}
+   }
+
+   // Runs task(store) on a store opened without the game. What the game
+   // shipped is known from the manifest its last boot left.
+   function with_store(key, task) {
+     return open_saves_store(key).then(function (fs) {
+       var manifest = read_manifest(fs),
+           keep = manifest && manifest.keep || [],
+           store = { fs: fs, keep: keep, skip: SAVES_SKIP.concat(keep),
+                     tree: manifest && manifest.dirs || null };
+       return Promise.resolve(store).then(task)
+                     .then(function (value) {
+                             close_store(fs);
+                             return value;
+                           },
+                           function (e) {
+                             close_store(fs);
+                             throw e;
+                           });
+     });
+   }
+
+   // The other stores of a family (older versions of the same game).
+   function family_stores(family, key) {
+     if (!family || !window.indexedDB || typeof indexedDB.databases !== 'function') {
+       return Promise.resolve([]);
+     }
+     return indexedDB.databases().then(function (list) {
+                                         return list.map(function (db) { return db.name; })
+                                                    .filter(function (name) {
+                                                              return name && name !== key && name.indexOf(family) === 0;
+                                                            });
+                                       },
+                                       function () { return []; });
+   }
+
+   // MAW: the first boot of a new store key brings the saves over from the
+   // newest older store of its family, fitted to the new layout, then deletes
+   // the old stores. Resolves with a report, or null if there was nothing.
+   function migrate_saves(store, key, family) {
+     return family_stores(family, key).then(function (names) {
+       return Promise.all(names.map(function (name) {
+                                      return open_saves_store(name).then(function (fs) {
+                                                                           return { name: name, fs: fs, manifest: read_manifest(fs) };
+                                                                         },
+                                                                         function () { return null; });
+                                    }));
+     }).then(function (olds) {
+       olds = olds.filter(Boolean).sort(function (a, b) {
+                                          return (b.manifest && b.manifest.lastBoot || 0) -
+                                                 (a.manifest && a.manifest.lastBoot || 0);
+                                        });
+       if (olds.length === 0) {
+         return null;
+       }
+       var source = olds[0],
+           manifest = source.manifest || {},
+           entries = collect_files(source.fs, SAVES_SKIP.concat(manifest.keep || [])),
+           report = null;
+       if (entries.length > 0) {
+         report = place_saves(store, entries, manifest.dirs || null, true);
+         report.from = source.name;
+       }
+       return when_flushed(store.fs).then(function () {
+         olds.forEach(function (old) {
+           close_store(old.fs);
+           try {
+             indexedDB.deleteDatabase(old.name);
+           } catch (e) {}
+         });
+         return report;
+       });
+     });
+   }
+
+   // MAW: runs once the game's files are mounted, before it boots: brings
+   // saves over from an older version of the game, then records this
+   // archive's layout in the manifest. Never fails the boot.
+   function prepare_store(store, key, family) {
+     var manifest = read_manifest(store.fs),
+         now = Date.now(),
+         migrating = !manifest && family ? migrate_saves(store, key, family)
+                                         : Promise.resolve(null);
+     return migrating.then(null, function (e) {
+                             console.error("Could not bring the saves over from an older version:", e);
+                             return null;
+                           })
+                     .then(function (report) {
+                             try {
+                               write_manifest(store.fs, { version: 1,
+                                                          key: key,
+                                                          created: manifest && manifest.created || now,
+                                                          lastBoot: now,
+                                                          keep: store.keep,
+                                                          dirs: store.tree });
+                             } catch (e) {
+                               console.error("Could not write the save store manifest:", e);
+                             }
+                             return report;
+                           });
+   }
+
+   // Static versions, for a game that isn't running. Don't use them while a
+   // game on the same key runs: it holds its own copy of the files.
+   Emularity.exportSaves = function (fileSystemKey) {
+     return with_store(fileSystemKey, export_saves);
+   };
+
+   Emularity.importSaves = function (fileSystemKey, zip) {
+     return with_store(fileSystemKey, function (store) { return import_saves(store, zip); });
+   };
+
+   Emularity.resetGameFiles = function (fileSystemKey) {
+     return with_store(fileSystemKey, reset_game_files);
+   };
+
+   Emularity.resetSaves = function (fileSystemKey) {
+     return with_store(fileSystemKey, reset_saves);
+   };
+
+   Emularity.downloadBlob = function (blob, filename) {
+     var url = URL.createObjectURL(blob),
+         a = document.createElement('a');
+     a.href = url;
+     a.download = filename || "saves.zip";
+     a.style.display = 'none';
+     document.body.appendChild(a);
+     a.click();
+     document.body.removeChild(a);
+     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
    };
 
    function extend(a, b) {

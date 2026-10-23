@@ -47,6 +47,10 @@
 
     <div class="c-emulator__controls">
       <button class="c-emulator__control c-emulator__control--start" id="start">Start</button>
+      <!-- SAE can freeze and resume, so this button is live here (it stays
+           disabled on engines that cannot, such as the sync EM-DOSBox build) -->
+      <button class="c-emulator__control c-emulator__control--pause" id="pause"
+              data-pause-label="Pause" data-resume-label="Resume">Pause</button>
       <button class="c-emulator__control c-emulator__control--stop" id="stop">Stop</button>
       <button class="c-emulator__control c-emulator__control--restart" id="restart">Restart</button>
       <button class="c-emulator__control c-emulator__control--fullscreen" id="fullscreen">Fullscreen</button>
@@ -63,6 +67,7 @@
         splashTitle: "Loading Amiga disk",
         buttons: {
           start: "#start",
+          pause: "#pause",
           stop: "#stop",
           restart: "#restart",
           fullscreen: "#fullscreen"

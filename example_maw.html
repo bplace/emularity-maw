@@ -48,6 +48,11 @@
       <button class="c-emulator__control c-emulator__control--stop" id="stop">Stop</button>
       <button class="c-emulator__control c-emulator__control--restart" id="restart">Restart</button>
       <button class="c-emulator__control c-emulator__control--fullscreen" id="fullscreen">Fullscreen</button>
+      <button class="c-emulator__control c-emulator__control--export" id="export-saves">Export saves</button>
+      <button class="c-emulator__control c-emulator__control--import" id="import-saves">Import saves</button>
+      <button class="c-emulator__control c-emulator__control--disk" id="export-disk">Download disk</button>
+      <button class="c-emulator__control c-emulator__control--reset-game" id="reset-game">Reset game files</button>
+      <button class="c-emulator__control c-emulator__control--reset-saves" id="reset-saves">Reset saves</button>
     </div>
 
     <script type="text/javascript" src="es6-promise.js"></script>
@@ -55,6 +60,8 @@
     <script type="text/javascript" src="loader.js"></script>
     <script type="text/javascript" src="emularity-controls.js"></script>
     <script type="text/javascript">
+      var GAME_ID = "doom-shareware",
+          GAME_HASH = "03cc411e6fe56f8a9eb1f95e5c5057c9";
       var controls = new EmulatorControls({
         canvas: "#canvas",
         fullscreenElement: "#playfield",
@@ -63,12 +70,28 @@
           start: "#start",
           stop: "#stop",
           restart: "#restart",
-          fullscreen: "#fullscreen"
+          fullscreen: "#fullscreen",
+          exportSaves: "#export-saves",
+          importSaves: "#import-saves",
+          exportDisk: "#export-disk",
+          resetGame: "#reset-game",
+          resetSaves: "#reset-saves"
+        },
+        // One save store per version of the game: the loader below uses the
+        // same id and hash (the md5 of the game zip). A new hash brings the
+        // saves over from the old store on the next boot.
+        gameId: GAME_ID,
+        gameHash: GAME_HASH,
+        savesFilename: "doom-saves.zip",
+        diskFilename: "doom-disk.zip",
+        onSavesMigrated: function (report) {
+          console.log("Saves brought over from " + report.from, report);
         },
         // The host builds the loader — this is where V4 injects the download
         // URL (with its token) and the exe to run. Called fresh on every Start.
         createLoader: function () {
-          return new DosBoxLoader(DosBoxLoader.emulatorJS("emulators/em-dosbox/dosbox-sync.js"),
+          return new DosBoxLoader(DosBoxLoader.saveStore(GAME_ID, GAME_HASH),
+                                  DosBoxLoader.emulatorJS("emulators/em-dosbox/dosbox-sync.js"),
                                   DosBoxLoader.locateAdditionalEmulatorJS(locateAdditionalFiles),
                                   DosBoxLoader.nativeResolution(640, 480),
                                   DosBoxLoader.mountZip("c",

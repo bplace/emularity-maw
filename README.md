@@ -34,6 +34,11 @@ This fork carries the [myabandonware.com](https://www.myabandonware.com) look fo
   emulator.start({ hasCustomCSS: true, splashImage: "/img/game-123.png" });
   ```
   Absolute paths and full URLs are used as-is. `Emularity.getBasePath()` reports the detected value.
+* **Your own logo.** `splashImage` takes any image URL. The theme draws it in a fixed 456 × 92 px box, centred and spinning (`.emularity-splash-image`). An SVG keeps its shape in that box: the browser scales it to fit and leaves thin bands if its ratio differs. A PNG or JPEG of another ratio stretches, because the rule sets both width and height. So prefer an SVG, or give a bitmap the 456 × 92 ratio. For another size, override the rule in your own stylesheet, and keep the margins at minus half the width and height, which centre the logo:
+
+  ```css
+  .emularity-splash-image { width: 600px; height: 112px; margin-left: -300px; margin-top: -56px; }
+  ```
 * **`emulator.setSplashTitle(text)`** sets the title-bar text after `start()`.
 * **A real loading bar.** In `hasCustomCSS` mode the loader tracks every download and drives a single fill bar with an "X / Y (NN%)" label (`.c-emulator__progress`). Stock mode is untouched — it keeps the per-file table.
 * The splash element is appended to the canvas's parent, so give that parent `position: relative` for the overlay to sit over the canvas. The host may set a per-game screenshot as the splash background on the splash element itself.
@@ -66,9 +71,94 @@ new EmulatorControls({
 ```
 
 - **Start** boots straight into the game after the download — no "press any key" gate.
+- **Pause** freezes the emulation but keeps the session alive, unlike Stop. Only some engines can do this: the Amiga (SAE) can, the sync EM-DOSBox build cannot. Pass a `pause` button and it enables itself only when the running engine supports it, so you never get a Pause that quietly does nothing:
+
+  ```js
+  buttons: { start: "#start", pause: "#pause", stop: "#stop", … }
+  ```
+  Give the button `data-pause-label` / `data-resume-label` for its text to follow the state; it also gets `aria-pressed` and `c-emulator__control--active`. On the emulator itself: `canPause()`, `isPaused()`, `pause()`, `resume()`, `togglePause()`, `setPause(bool)`.
 - **Stop** aborts any download, force-exits the runtime and swaps in a fresh canvas.
 - **Restart** = stop + start. **Fullscreen** is native, with a Firefox CSS fallback.
 - Buttons enable/disable by state (via `.c-emulator__control--disabled`); style them however you like with the `.c-emulator__control*` classes.
+
+## Savegames, disk download and resets
+
+The game sits in read-only zip mounts. Everything it writes, saves included,
+goes to a separate layer that Emularity keeps in IndexedDB: the game's *save
+store*. The controls can export that layer as a zip, import one back,
+download the whole disk, and reset the store.
+
+### One store per version of a game
+
+Name the store with the game's id and a hash of its archive (V4: the file's
+`md5`). Pass the same pair to the loader and to the controls:
+
+```js
+createLoader: function () {
+  return new DosBoxLoader(DosBoxLoader.saveStore("maw-123", md5), /* … */);
+},
+gameId: "maw-123",
+gameHash: md5,                 // same store, so the buttons work before Start
+```
+
+The store is named `maw-123@<md5>`. When the archive changes, its hash
+changes, and the game boots on a fresh store. On that first boot the loader
+brings the saves over from the old store (the newest one named `maw-123@…`),
+then deletes the old stores. It fits each save's folder to the new layout:
+
+1. A folder the old archive shipped goes where most of its files went (`C:\GAMES\DOOM` → `C:\DOOM`).
+2. A folder the game made goes inside wherever its parent went (`C:\GAMES\DOOM\SAVES` → `C:\DOOM\SAVES`).
+3. A folder inside the game's root goes to the same place inside the new root. The root is the folder of the shallowest `.exe` that both archives ship under the same name (case ignored). That is usually the game's own `.exe`, sometimes a helper like `DOS4GW.EXE`. If that name appears twice at that depth, or two names tie and point to different roots, this rule is skipped.
+4. Else, the new folder whose name path ends the same way wins.
+5. Else the file keeps its path. The player can move it from the DOS prompt.
+
+A file that would cover a file the new archive ships, such as an edited
+config, goes to `C:\OLDSAVES\<its old path>` instead. Nothing is lost. The
+`onSavesMigrated(report)` option gets `{ from, count, moved, kept, parked }`,
+so the host can tell the player.
+
+Without a hash, a plain `DosBoxLoader.fileSystemKey("game-123")` and
+`fileSystemKey: "game-123"` still work, without migration. Give every game a
+store of its own: otherwise all games share the `"emularity"` store and their
+saves mix.
+
+Saves made before this release have no record of their layout, so they can't
+be brought over. Migration needs `indexedDB.databases()` (Chrome 71, Safari
+14, Firefox 126). Where it's missing, the game boots on a fresh store.
+
+### The buttons
+
+```js
+savesFilename: "game-123-saves.zip",
+diskFilename: "game-123-disk.zip",
+buttons: { /* … */, exportSaves: "#export", importSaves: "#import",
+           exportDisk: "#disk", resetGame: "#reset-game", resetSaves: "#reset-saves" },
+onSavesError: function (err) { /* default: alert(err.message) */ },
+onBeforeImport: function (file) { return confirm("Replace your saves?"); },
+onBeforeReset: function (kind) { /* "game" or "saves"; default: confirm(...) */ }
+```
+
+- **Export saves** downloads what the player changed or made, with its folders (`c/DOOM/DOOMSAV0.DSG`). It works before Start, and reports "No saves found" if there are none.
+- **Import saves** reads a zip made by Export. Files replace those of the same name. A zip from another version of the game carries that version's layout, so its saves are fitted to this one as in migration. A running game restarts to see them.
+- **Download disk** zips the C: drive (and any other) as the game sees it: shipped files with the player's changes on top. It needs the game loaded, and builds the zip in memory, which is fine for floppy and hard-disk games but heavy for CD-sized ones. Zips stop at 4 GB.
+- **Reset game files** puts every shipped file back, edited or deleted, and keeps every file the game made. A game that saves into a file it ships loses that save too.
+- **Reset saves** deletes everything the player changed or made. The game is as shipped.
+
+Resets stop a running game and start it again. Before Start, Reset game
+files needs one earlier boot of this version, which records what it ships.
+
+### Without the controls
+
+On an emulator, once its files are loaded: `exportSaves()`, `exportDisk()`
+→ `Promise<Blob>`; `importSaves(zip)` → `Promise<report>`; `resetGameFiles()`,
+`resetSaves()` (call them after `stop()`, then boot a new emulator). Pass
+`saves_migrated: function (report) {}` in the emulator's callbacks for the
+migration report. With no emulator: `Emularity.exportSaves(key)`,
+`Emularity.importSaves(key, zip)`, `Emularity.resetGameFiles(key)`,
+`Emularity.resetSaves(key)`, with `key = Emularity.storeKey(gameId, hash)`.
+`Emularity.downloadBlob(blob, filename)` saves a Blob. Don't use the
+`Emularity.*` calls while a game on the same store runs: the game holds its
+own copy of the files and won't see the change.
 
 See `example_maw.html` for a full working page. The download URL for the game
 file (and any token) is supplied by the host through `createLoader` /
