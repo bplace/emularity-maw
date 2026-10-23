@@ -3261,13 +3261,64 @@ var Module = null;
      });
    }
 
+   // The drive folders of a store (c, d, ...), lower case: the mounted ones,
+   // else the top folders of the shipped layout.
+   function store_drives(store) {
+     if (store.drives && store.drives.length > 0) {
+       return store.drives;
+     }
+     return Object.keys(store.tree || {})
+                  .filter(function (dir) { return dir.split('/').length === 2; })
+                  .map(function (dir) { return dir.substring(1).toLowerCase(); });
+   }
+
+   // MAW: undoes what re-zipping does to an Export saves zip. Drops OS
+   // clutter (__MACOSX/, ._ files, .DS_Store, Thumbs.db) at any depth, then,
+   // while every entry sits in one top folder that isn't a drive (Finder's
+   // Compress wraps the lot in the folder's name), takes that folder off.
+   // drives is the list of drive folders; empty means any single letter.
+   function clean_zip_entries(entries, drives) {
+     function is_drive(name) {
+       name = name.toLowerCase();
+       return drives.length > 0 ? drives.indexOf(name) !== -1 : /^[a-z]$/.test(name);
+     }
+     entries = entries.filter(function (entry) {
+       var parts = entry.path.split('/'),
+           name = parts[parts.length - 1].toLowerCase();
+       return parts.indexOf('__MACOSX') === -1 &&
+              name.indexOf('._') !== 0 &&
+              name !== '.ds_store' &&
+              name !== 'thumbs.db';
+     });
+     for (;;) {
+       var top = entries.length > 0 ? entries[0].path.split('/')[0] : null;
+       if (!top || is_drive(top) ||
+           !entries.every(function (entry) { return entry.path.indexOf(top + '/') === 0; })) {
+         return entries;
+       }
+       entries = entries.map(function (entry) {
+         return { path: entry.path.substring(top.length + 1), data: entry.data, date: entry.date };
+       });
+     }
+   }
+
    // Zips made against another archive layout (another manifest key) are
    // fitted to this one; others go back exactly where they were.
    function import_saves(store, zip) {
      return read_zip(zip).then(function (entries) {
        var theirs = null,
            ours = read_manifest(store.fs),
+           drives = store_drives(store),
            report;
+       entries = clean_zip_entries(entries, drives);
+       // Files outside every drive would be written where the game can't see
+       // them, so refuse rather than report a success.
+       if (drives.length > 0 &&
+           !entries.some(function (entry) {
+                           return drives.indexOf(entry.path.split('/')[0].toLowerCase()) !== -1;
+                         })) {
+         throw new Error("The zip holds no saves for this game");
+       }
        entries = entries.filter(function (entry) {
          if ('/' + entry.path === MANIFEST) {
            try {

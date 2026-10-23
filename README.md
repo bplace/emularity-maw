@@ -140,6 +140,7 @@ onBeforeReset: function (kind) { /* "game" or "saves"; default: confirm(...) */ 
 
 - **Export saves** downloads what the player changed or made, with its folders (`c/DOOM/DOOMSAV0.DSG`). It works before Start, and reports "No saves found" if there are none.
 - **Import saves** reads a zip made by Export. Files replace those of the same name. A zip from another version of the game carries that version's layout, so its saves are fitted to this one as in migration. A running game restarts to see them.
+  A zip the player unzipped and zipped again still works. Import drops `__MACOSX/`, `._*` files, `.DS_Store` and `Thumbs.db`, and takes off a top folder that wraps everything (Finder's Compress adds one). A zip with nothing for this game's drives fails with "The zip holds no saves for this game", and nothing is written.
 - **Download disk** zips the C: drive (and any other) as the game sees it: shipped files with the player's changes on top. It needs the game loaded, and builds the zip in memory, which is fine for floppy and hard-disk games but heavy for CD-sized ones. Zips stop at 4 GB.
 - **Reset game files** puts every shipped file back, edited or deleted, and keeps every file the game made. A game that saves into a file it ships loses that save too.
 - **Reset saves** deletes everything the player changed or made. The game is as shipped.
